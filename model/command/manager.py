@@ -9,7 +9,7 @@ from type.command import CommandResult
 from type.register import RegisteredPlugins
 from model.command.parser import CommandParser
 from model.plugin.command import PluginCommandBridge
-from SparkleLogging.utils.core import LogManager
+from util.log import LogManager
 from logging import Logger
 from dataclasses import dataclass
 
@@ -124,8 +124,11 @@ class CommandManager():
             else:
                 command_result = handler(message_event, context)
             
-            if not isinstance(command_result, CommandResult):
-                raise ValueError(f"Command {command} handler should return CommandResult.")
+            # if not isinstance(command_result, CommandResult):
+            #     raise ValueError(f"Command {command} handler should return CommandResult.")
+
+            if not command_result:
+                return
             
             context.metrics_uploader.command_stats[command] += 1
             

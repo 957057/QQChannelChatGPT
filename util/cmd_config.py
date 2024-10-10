@@ -1,7 +1,9 @@
 import os
 import json
+import shutil
 import logging
-from type.config import DEFAULT_CONFIG, DEFAULT_CONFIG_VERSION_2, MAPPINGS_1_2
+from util.io import on_error
+from type.config import DEFAULT_CONFIG_VERSION_2, MAPPINGS_1_2
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional
 
@@ -16,7 +18,6 @@ class RateLimit:
 @dataclass
 class PlatformSettings:
     unique_session: bool = False
-    welcome_message_when_join: str = ""
     rate_limit: RateLimit = field(default_factory=RateLimit)
     reply_prefix: str = ""
     forward_threshold: int = 200
@@ -89,6 +90,7 @@ class LLMConfig:
 class LLMSettings:
     wake_prefix: str = ""
     web_search: bool = False
+    identifier: bool = False
 
 @dataclass
 class BaiduAIPConfig:
@@ -132,6 +134,8 @@ class AstrBotConfig():
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     platform: List[PlatformConfig] = field(default_factory=list)
     wake_prefix: List[str] = field(default_factory=list)
+    log_level: str = "INFO"
+    t2i_endpoint: str = ""
 
     def __init__(self) -> None:
         self.init_configs()
@@ -139,6 +143,9 @@ class AstrBotConfig():
         # compability
         if isinstance(self.wake_prefix, str):
             self.wake_prefix = [self.wake_prefix]
+            
+        if len(self.wake_prefix) == 0:
+            self.wake_prefix.append("/")
         
     def load_from_dict(self, data: Dict):
         '''从字典中加载配置到对象。
@@ -169,7 +176,9 @@ class AstrBotConfig():
         self.https_proxy=data.get("https_proxy", "")
         self.http_proxy=data.get("http_proxy", "")
         self.dashboard=DashboardConfig(**data.get("dashboard", {}))
-        self.wake_prefix=data.get("wake_prefix", [])
+        self.wake_prefix=data.get("wake_prefix", ["/"])
+        self.log_level=data.get("log_level", "INFO")
+        self.t2i_endpoint=data.get("t2i_endpoint", "")
 
     def migrate_config_1_2(self, old: dict) -> dict:
         '''将配置文件从版本 1 迁移至版本 2'''
@@ -220,22 +229,15 @@ class AstrBotConfig():
                 config = self.migrate_config_1_2(config)
                 self.flush_config(config)
         
-        _tag = False
-        for key, val in DEFAULT_CONFIG_VERSION_2.items():
-            if key not in config:
-                config[key] = val
-                _tag = True
-        if _tag:
-            with open(ASTRBOT_CONFIG_PATH, "w", encoding="utf-8-sig") as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
-                f.flush()
-
+        # 加载配置到对象
         self.load_from_dict(config)
+        # 保存到文件
+        # 这一步操作是为了保证配置文件中的字段的完整性。
+        # 在版本变动新增配置项时，将对象中新增的配置项的默认值写入文件。
+        self.save_config()
 
     def get(self, key: str, default=None):
-        '''
-        从文件系统中直接获取配置
-        '''
+        '''从文件系统中直接获取配置'''
         with open(ASTRBOT_CONFIG_PATH, "r", encoding="utf-8-sig") as f:
             d = json.load(f)
             if key in d:
@@ -244,9 +246,7 @@ class AstrBotConfig():
                 return default
 
     def get_all(self):
-        '''
-        从文件系统中获取所有配置
-        '''
+        '''从文件系统中获取所有配置'''
         with open(ASTRBOT_CONFIG_PATH, "r", encoding="utf-8-sig") as f:
             conf_str = f.read() 
         if conf_str.startswith(u'/ufeff'): # remove BOM
@@ -266,31 +266,29 @@ class AstrBotConfig():
                 
     def to_dict(self) -> Dict:
         return asdict(self)
-        
-    def put_by_dot_str(self, key: str, value):
-        '''根据点分割的字符串，将值写入配置文件'''
-        with open(ASTRBOT_CONFIG_PATH, "r", encoding="utf-8-sig") as f:
-            d = json.load(f)
-            _d = d
-            _ks = key.split(".")
-            for i in range(len(_ks)):
-                if i == len(_ks) - 1:
-                    _d[_ks[i]] = value
-                else:
-                    _d = _d[_ks[i]]
-            with open(ASTRBOT_CONFIG_PATH, "w", encoding="utf-8-sig") as f:
-                json.dump(d, f, indent=2, ensure_ascii=False)
-                f.flush()
-                
-    def update_by_path(self, path: List):
-        '''根据路径更新配置文件。
-        
-        这个方法首先会更新缓存在内存中的配置，然后再写入文件。
-        '''
-        
-        for key in path:
-            if key not in self:
-                raise KeyError(f"Key {key} not found in config.")
 
     def check_exist(self) -> bool:
         return os.path.exists(ASTRBOT_CONFIG_PATH)
+    
+def try_migrate():
+    '''
+    - 将 cmd_config.json 迁移至 data/cmd_config.json (如果存在)
+    - 将 addons/plugins 迁移至 data/plugins (如果存在)
+    '''
+    if os.path.exists("cmd_config.json") and not os.path.exists("data/cmd_config.json"):
+        try:
+            shutil.move("cmd_config.json", "data/cmd_config.json")
+        except:
+            logger.error("迁移 cmd_config.json 失败。")
+
+    if os.path.exists("addons/plugins"):
+        if os.path.exists("data/plugins"):
+            try:
+                shutil.rmtree("data/plugins", onerror=on_error)
+            except:
+                logger.error("删除 data/plugins 失败。")
+        try:
+            shutil.move("addons/plugins", "data/")
+            shutil.rmtree("addons", onerror=on_error)
+        except:
+            logger.error("迁移 addons/plugins 失败。")

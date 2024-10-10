@@ -4,10 +4,9 @@ import shutil
 import socket
 import time
 import aiohttp
-import requests
 
 from PIL import Image
-from SparkleLogging.utils.core import LogManager
+from util.log import LogManager
 from logging import Logger
 
 logger: Logger = LogManager.GetLogger(log_name='astrbot')
@@ -47,13 +46,11 @@ def port_checker(port: int, host: str = "localhost"):
     
 
 def save_temp_img(img: Image) -> str:
-    if not os.path.exists("temp"):
-        os.makedirs("temp")
-
+    os.makedirs("data/temp", exist_ok=True)
     # 获得文件创建时间，清除超过1小时的
     try:
-        for f in os.listdir("temp"):
-            path = os.path.join("temp", f)
+        for f in os.listdir("data/temp"):
+            path = os.path.join("data/temp", f)
             if os.path.isfile(path):
                 ctime = os.path.getctime(path)
                 if time.time() - ctime > 3600:
@@ -63,7 +60,7 @@ def save_temp_img(img: Image) -> str:
 
     # 获得时间戳
     timestamp = int(time.time())
-    p = f"temp/{timestamp}.jpg"
+    p = f"data/temp/{timestamp}.jpg"
 
     if isinstance(img, Image.Image):
         img.save(p)
@@ -101,16 +98,20 @@ async def download_image_by_url(url: str, post: bool = False, post_data: dict = 
     except Exception as e:
         raise e
     
-def download_file(url: str, path: str):
+async def download_file(url: str, path: str):
     '''
     从指定 url 下载文件到指定路径 path
     '''
     try:
         logger.info(f"下载文件: {url}")
-        with requests.get(url, stream=True) as r:
-            with open(path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                with open(path, 'wb') as f:
+                    while True:
+                        chunk = await resp.content.read(8192)
+                        if not chunk:
+                            break
+                        f.write(chunk)
     except Exception as e:
         raise e
 

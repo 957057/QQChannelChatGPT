@@ -5,6 +5,9 @@ from type.astrbot_message import AstrBotMessage
 from type.command import CommandResult
 from type.astrbot_message import MessageType
 
+class T2IException(Exception):
+    def __init__(self, message: str = "文本转图片时发生错误") -> None:
+        super().__init__(message)
 
 class Platform():
     def __init__(self, platform_name: str, context) -> None:
@@ -40,14 +43,18 @@ class Platform():
         '''
         pass
 
-    def parse_message_outline(self, message: AstrBotMessage) -> str:
+    def parse_message_outline(self, message: Union[AstrBotMessage, list]) -> str:
         '''
         将消息解析成大纲消息形式，如: xxxxx[图片]xxxxx。用于输出日志等。
         '''
-        if isinstance(message, str):
-            return message
         ret = ''
-        parsed = message if isinstance(message, list) else message.message
+        if isinstance(message, list):
+            parsed = message
+        elif isinstance(message, AstrBotMessage):
+            parsed = message.message
+        elif isinstance(message, str):
+            return message
+        
         try:
             for node in parsed:
                 if isinstance(node, Plain):
@@ -81,6 +88,7 @@ class Platform():
             else:
                 rendered_images.append(Image.fromFileSystem(p))
             return rendered_images
+        return message_result
         
     async def record_metrics(self):
         self.context.metrics_uploader.increment_platform_stat(self.PLATFORM_NAME)

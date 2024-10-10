@@ -5,17 +5,16 @@ import traceback
 import astrbot.message.unfit_words as uw
 
 from typing import Dict
-from astrbot.persist.helper import dbConn
+from astrbot.db import BaseDatabase
 from model.provider.provider import Provider
 from model.command.manager import CommandManager
 from type.message_event import AstrMessageEvent, MessageResult
 from type.types import Context
 from type.command import CommandResult
-from SparkleLogging.utils.core import LogManager
+from util.log import LogManager
 from logging import Logger
 from nakuru.entities.components import Image
 from util.agent.func_call import FuncCall
-import util.agent.web_searcher as web_searcher
 from openai._exceptions import *
 from openai.types.chat.chat_completion_message_tool_call import Function
 
@@ -60,6 +59,9 @@ class ContentSafetyHelper():
                 from astrbot.message.baidu_aip_judge import BaiduJudge
                 self.baidu_judge = BaiduJudge(aip)
                 logger.info("已启用百度 AI 内容审核。")
+            except ImportError as e:
+                logger.error("检测到库依赖不完整，将不会启用百度 AI 内容审核。请先使用 pip 安装 `baidu_aip` 包。")
+                logger.error(e)
             except BaseException as e:
                 logger.error("百度 AI 内容审核初始化失败。")
                 logger.error(e)
@@ -101,13 +103,14 @@ class ContentSafetyHelper():
 class MessageHandler():
     def __init__(self, context: Context,
                  command_manager: CommandManager,
-                 persist_manager: dbConn) -> None:
+                 db_helper: BaseDatabase) -> None:
         self.context = context
         self.command_manager = command_manager
-        self.persist_manager = persist_manager
+        self.db_helper = db_helper
         self.rate_limit_helper = RateLimitHelper(context)
         self.content_safety_helper = ContentSafetyHelper(context)
         self.llm_wake_prefix = self.context.config_helper.llm_settings.wake_prefix
+        self.llm_identifier = self.context.config_helper.llm_settings.identifier
         if self.llm_wake_prefix:
             self.llm_wake_prefix = self.llm_wake_prefix.strip()
         self.provider = self.context.llms[0].llm_instance if len(self.context.llms) > 0 else None
@@ -125,9 +128,6 @@ class MessageHandler():
         '''
         msg_plain = message.message_str.strip()
         provider = llm_provider if llm_provider else self.provider        
-        
-        if os.environ.get('TEST_MODE', 'off') != 'on':
-            self.persist_manager.record_message(message.platform.platform_name, message.session_id)
         
         # TODO: this should be configurable
         # if not message.message_str:
@@ -154,12 +154,20 @@ class MessageHandler():
                 is_command_call=True,
                 use_t2i=cmd_res.is_use_t2i
             )
-        
-        # next is the LLM part
+            
+        # middlewares
+        for middleware in self.context.middlewares:
+            try:
+                logger.info(f"执行中间件 {middleware.origin}/{middleware.name}...")
+                await middleware.func(message, self.context)
+            except BaseException as e:
+                logger.error(f"中间件 {middleware.origin}/{middleware.name} 处理消息时发生异常：{e}，跳过。")
+                logger.error(traceback.format_exc())
         
         if message.only_command:
             return
         
+        # next is the LLM part
         # check if the message is a llm-wake-up command
         if self.llm_wake_prefix and not msg_plain.startswith(self.llm_wake_prefix):
             logger.debug(f"消息 `{msg_plain}` 没有以 LLM 唤醒前缀 `{self.llm_wake_prefix}` 开头，忽略。")
@@ -228,6 +236,13 @@ class MessageHandler():
             else:
                 # normal chat
                 tool_use_flag = False
+                # add user info to the prompt
+                if self.llm_identifier:
+                    user_id = message.message_obj.sender.user_id
+                    user_nickname = message.message_obj.sender.nickname
+                    user_info = f"[User ID: {user_id}, Nickname: {user_nickname}]\n"
+                    msg_plain = user_info + msg_plain
+
                 llm_result = await provider.text_chat(
                     prompt=msg_plain, 
                     session_id=message.session_id, 

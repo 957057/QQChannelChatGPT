@@ -6,8 +6,7 @@ import warnings
 import traceback
 import mimetypes
 from astrbot.bootstrap import AstrBotBootstrap
-from SparkleLogging.utils.core import LogManager
-from logging import Formatter
+from util.log import LogManager
 
 warnings.filterwarnings("ignore")
 logo_tmpl = r"""
@@ -27,6 +26,8 @@ def main():
         # delete qqbotpy's logger
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
+        
+        logger.info(logo_tmpl)
 
         bootstrap = AstrBotBootstrap() 
         asyncio.run(bootstrap.run())
@@ -42,7 +43,8 @@ def check_env():
         exit()
         
     os.makedirs("data/config", exist_ok=True)
-    os.makedirs("temp", exist_ok=True)
+    os.makedirs("data/plugins", exist_ok=True)
+    os.makedirs("data/temp", exist_ok=True)
 
     # workaround for issue #181
     mimetypes.add_type("text/javascript", ".js") 
@@ -51,11 +53,5 @@ def check_env():
     
 if __name__ == "__main__":
     check_env()
-    
-    logger = LogManager.GetLogger(
-        log_name='astrbot',
-        out_to_console=True,
-        custom_formatter=Formatter('[%(asctime)s| %(name)s - %(levelname)s|%(filename)s:%(lineno)d]: %(message)s', datefmt="%H:%M:%S")
-    )
-    logger.info(logo_tmpl)
+    logger = LogManager.GetLogger(log_name='astrbot')
     main()

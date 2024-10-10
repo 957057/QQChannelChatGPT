@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from type.register import RegisteredPlugins
 from typing import List, Union, Callable
-from SparkleLogging.utils.core import LogManager
+from util.log import LogManager
 from logging import Logger
 
 logger: Logger = LogManager.GetLogger(log_name='astrbot')
@@ -24,4 +24,3 @@ class PluginCommandBridge():
         
     def register_command(self, plugin_name, command_name, description, priority, handler, use_regex=False, ignore_prefix=False):
         self.plugin_commands_waitlist.append(CommandRegisterRequest(command_name, description, priority, handler, use_regex, plugin_name, ignore_prefix))
-        

@@ -11,16 +11,11 @@ from model.platform.qq_aiocqhttp import AIOCQHTTP
 from model.provider.openai_official import ProviderOpenAIOfficial
 from type.astrbot_message import *
 from type.message_event import *
-from SparkleLogging.utils.core import LogManager
-from logging import Formatter
+from util.log import LogManager
 
 from util.cmd_config import QQOfficialPlatformConfig, AiocqhttpPlatformConfig
 
-logger = LogManager.GetLogger(
-log_name='astrbot',
-    out_to_console=True,
-    custom_formatter=Formatter('[%(asctime)s| %(name)s - %(levelname)s|%(filename)s:%(lineno)d]: %(message)s', datefmt="%H:%M:%S")
-)
+logger = LogManager.GetLogger(log_name='astrbot')
 pytest_plugins = ('pytest_asyncio',)
 
 os.environ['TEST_MODE'] = 'on'
@@ -31,8 +26,8 @@ llm_config.api_base = os.environ['OPENAI_API_BASE']
 llm_config.key = [os.environ['OPENAI_API_KEY']]
 llm_config.model_config.model = os.environ['LLM_MODEL']
 llm_config.model_config.max_tokens = 1000
-llm_provider = ProviderOpenAIOfficial(llm_config)
 asyncio.run(bootstrap.run())
+llm_provider = ProviderOpenAIOfficial(llm_config, bootstrap.db_helper)
 bootstrap.message_handler.provider = llm_provider
 bootstrap.config_helper.wake_prefix = ["/"]
 bootstrap.config_helper.admins_id = ["905617992"]
@@ -135,7 +130,17 @@ class TestInteralCommandHsandle():
             abm = self.create("/t2i")
             await aiocqhttp.handle_msg(abm)
         await self.fast_test("/help")
-        
+
+    @pytest.mark.asyncio
+    async def test_plugin(self):
+        pname = "astrbot_plugin_bilibili"
+        url = f"https://github.com/Soulter/{pname}"
+        await self.fast_test("/plugin")
+        await self.fast_test(f"/plugin l")
+        await self.fast_test(f"/plugin i {url}")
+        await self.fast_test(f"/plugin u {url}")
+        await self.fast_test(f"/plugin d {pname}")
+
 class TestLLMChat():
     @pytest.mark.asyncio
     async def test_llm_chat(self):

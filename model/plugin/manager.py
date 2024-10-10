@@ -5,7 +5,7 @@ import traceback
 import uuid
 import shutil
 import yaml
-import subprocess
+import logging
 
 from util.updator.plugin_updator import PluginUpdator
 from util.io import remove_dir, download_file
@@ -13,8 +13,9 @@ from types import ModuleType
 from type.types import Context
 from type.plugin import *
 from type.register import *
-from SparkleLogging.utils.core import LogManager
+from util.log import LogManager
 from logging import Logger
+from pip import main as pip_main
 
 logger: Logger = LogManager.GetLogger(log_name='astrbot')
 
@@ -83,55 +84,63 @@ class PluginManager():
                 self.update_plugin_dept(os.path.join(plugin_path, "requirements.txt"))
 
     def update_plugin_dept(self, path):
-        mirror = "https://mirrors.aliyun.com/pypi/simple/"
-        py = sys.executable
-        # os.system(f"{py} -m pip install -r {path} -i {mirror} --break-system-package --trusted-host mirrors.aliyun.com")
+        pip_main(['install', '-r', path, '--trusted-host', 'mirrors.aliyun.com', '-i', 'https://mirrors.aliyun.com/pypi/simple/'])
+        # mirror = "https://mirrors.aliyun.com/pypi/simple/"
+        # py = sys.executable
+        # cmd = f"{py} -m pip install -r {path} -i {mirror} --trusted-host mirrors.aliyun.com"
+        # if break_system_package:
+        #     cmd += " --break-system-package"
+        # process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
         
-        process = subprocess.Popen(f"{py} -m pip install -r {path} -i {mirror} --break-system-package --trusted-host mirrors.aliyun.com", 
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
+        # while True:
+        #     output = process.stdout.readline()
+        #     err = process.stderr.readline()
+        #     if err:
+        #         err = err.strip()
+        #         logger.error(err)
+        #         if "no such option: --break-system-package" in err:
+        #             self.update_plugin_dept(path, break_system_package=False)
+        #             break
+        #     if output == '' and process.poll() is not None:
+        #         break
+        #     if output:
+        #         output = output.strip()
+        #         if output.startswith("Requirement already satisfied"):
+        #             continue
+        #         if output.startswith("Using cached"):
+        #             continue
+        #         if output.startswith("Looking in indexes"):
+        #             continue
+        #         logger.info(output)
+            
+        # rc = process.poll()
         
-        while True:
-            output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
-                break
-            if output:
-                output = output.strip()
-                if output.startswith("Requirement already satisfied"):
-                    continue
-                if output.startswith("Using cached"):
-                    continue
-                if output.startswith("Looking in indexes"):
-                    continue
-                logger.info(output)
-                
-        rc = process.poll()
         
-        
-    def install_plugin(self, repo_url: str):
+    async def install_plugin(self, repo_url: str):
         ppath = self.plugin_store_path
 
         # we no longer use Git anymore :)
         # Repo.clone_from(repo_url, to_path=plugin_path, branch='master')
         
-        plugin_path = self.updator.update(repo_url)
+        plugin_path = await self.updator.update(repo_url)
         with open(os.path.join(plugin_path, "REPO"), "w", encoding='utf-8') as f:
             f.write(repo_url)
             
-        self.check_plugin_dept_update()
+        # self.check_plugin_dept_update()
 
         return plugin_path
         # ok, err = self.plugin_reload()
         # if not ok:
         #     raise Exception(err)
         
-    def download_from_repo_url(self, target_path: str, repo_url: str):
+    async def download_from_repo_url(self, target_path: str, repo_url: str):
         repo_namespace = repo_url.split("/")[-2:]
         author = repo_namespace[0]
         repo = repo_namespace[1]
 
         logger.info(f"正在下载插件 {repo} ...")
         release_url = f"https://api.github.com/repos/{author}/{repo}/releases"
-        releases = self.updator.fetch_release_info(url=release_url)
+        releases = await self.updator.fetch_release_info(url=release_url)
         if not releases:
             # download from the default branch directly. 
             logger.warn(f"未在插件 {author}/{repo} 中找到任何发布版本，将从默认分支下载。")
@@ -139,7 +148,7 @@ class PluginManager():
         else:
             release_url = releases[0]['zipball_url']
 
-        download_file(release_url, target_path + ".zip")
+        await download_file(release_url, target_path + ".zip")
 
     def get_registered_plugin(self, plugin_name: str) -> RegisteredPlugin:
         for p in self.context.cached_plugins:
@@ -156,12 +165,12 @@ class PluginManager():
         if not remove_dir(os.path.join(ppath, root_dir_name)):
             raise Exception("移除插件成功，但是删除插件文件夹失败。您可以手动删除该文件夹，位于 addons/plugins/ 下。")
 
-    def update_plugin(self, plugin_name: str):
+    async def update_plugin(self, plugin_name: str):
         plugin = self.get_registered_plugin(plugin_name)
         if not plugin:
             raise Exception("插件不存在。")
         
-        self.updator.update(plugin)
+        await self.updator.update(plugin)
         
     def plugin_reload(self):
         cached_plugins = self.context.cached_plugins
@@ -182,9 +191,16 @@ class PluginManager():
                 
                 logger.info(f"正在加载插件 {root_dir_name} ...")
 
-                self.check_plugin_dept_update(target_plugin=root_dir_name)
-
-                module = __import__("addons.plugins." +
+                # self.check_plugin_dept_update(target_plugin=root_dir_name)
+                
+                try:
+                    module = __import__("data.plugins." +
+                                        root_dir_name + "." + p, fromlist=[p])
+                except (ModuleNotFoundError, ImportError) as e:
+                    # 尝试安装插件依赖
+                    logger.error(f"尝试安装插件依赖。")
+                    self.check_plugin_dept_update(target_plugin=root_dir_name)
+                    module = __import__("data.plugins." +
                                         root_dir_name + "." + p, fromlist=[p])
 
                 cls = self.get_classes(module)
@@ -216,6 +232,11 @@ class PluginManager():
                 traceback.print_exc()
                 fail_rec += f"加载{p}插件出现问题，原因 {str(e)}\n"
 
+        # 清除 pip.main 导致的多余的 logging handlers
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        
+        
         if not fail_rec:
             return True, None
         else:
@@ -252,7 +273,7 @@ class PluginManager():
         # remove the temp dir
         remove_dir(temp_dir)
         
-        self.check_plugin_dept_update()
+        # self.check_plugin_dept_update()
 
         # ok, err = self.plugin_reload()
         # if not ok:
